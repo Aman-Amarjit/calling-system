@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Priya — AI Appointment Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav class="nav">
+    <div class="container nav-inner">
+      <span class="logo">Priya</span>
+      <a href="#demo" class="btn btn-outline">See it live</a>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container hero-inner">
+      <div class="hero-text">
+        <p class="label">AI Calling Bot</p>
+        <h1>Your phone line, handled by AI</h1>
+        <p class="hero-sub">
+          Priya answers inbound calls, books appointments through natural conversation,
+          and logs every booking to Google Sheets — without any human involvement.
+        </p>
+        <div class="hero-actions">
+          <a href="#demo" class="btn btn-primary">Watch the demo</a>
+          <a href="#how" class="btn btn-ghost">How it works</a>
+        </div>
+      </div>
+      <div class="hero-stat-block">
+        <div class="stat">
+          <span class="stat-num">~90s</span>
+          <span class="stat-label">Full booking, start to finish</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">&lt;200ms</span>
+          <span class="stat-label">AI response time (Groq)</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">24/7</span>
+          <span class="stat-label">No staff needed</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO SECTION -->
+  <section class="section" id="demo">
+    <div class="container">
+      <h2>What the client sees</h2>
+      <p class="section-sub">
+        You dial the number in front of them. The AI picks up, collects their details,
+        and the booking row appears in Google Sheets before the call ends.
+        That's the moment that closes the deal.
+      </p>
+      <div class="demo-flow">
+        <div class="flow-step">
+          <span class="step-num">1</span>
+          <div>
+            <strong>You call the number</strong>
+            <p>Telnyx receives the call and fires a webhook to the server.</p>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <span class="step-num">2</span>
+          <div>
+            <strong>Priya answers</strong>
+            <p>"Namaste Sir, aapki kaise sahayata kar sakti hoon?"</p>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <span class="step-num">3</span>
+          <div>
+            <strong>Details collected</strong>
+            <p>Name, phone, date, time — one question at a time.</p>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <span class="step-num">4</span>
+          <div>
+            <strong>Row appears live</strong>
+            <p>Google Sheets updates the moment Priya says "booking confirmed".</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="section section-alt" id="how">
+    <div class="container">
+      <h2>How it works</h2>
+      <p class="section-sub">Five components, all wired together.</p>
+      <div class="stack-table">
+        <div class="stack-row stack-header">
+          <span>Component</span>
+          <span>What it does</span>
+          <span>Technology</span>
+        </div>
+        <div class="stack-row">
+          <span>Phone line</span>
+          <span>Receives inbound calls</span>
+          <span>Telnyx</span>
+        </div>
+        <div class="stack-row">
+          <span>Speech to text</span>
+          <span>Transcribes caller voice in real time</span>
+          <span>Deepgram nova-2</span>
+        </div>
+        <div class="stack-row">
+          <span>AI brain</span>
+          <span>Understands and responds naturally</span>
+          <span>Groq / Ollama (local)</span>
+        </div>
+        <div class="stack-row">
+          <span>Voice output</span>
+          <span>Converts text to natural speech</span>
+          <span>ElevenLabs</span>
+        </div>
+        <div class="stack-row">
+          <span>Booking log</span>
+          <span>Writes confirmed bookings live</span>
+          <span>Google Sheets API</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LIVE STATUS -->
+  <section class="section" id="status">
+    <div class="container">
+      <h2>Live call monitor</h2>
+      <p class="section-sub">Active calls and recent bookings from the running server.</p>
+      <div class="monitor-grid">
+        <div class="monitor-card">
+          <h3>Active calls</h3>
+          <div id="active-calls" class="monitor-value">—</div>
+          <p class="monitor-hint">Updates every 3 seconds</p>
+        </div>
+        <div class="monitor-card">
+          <h3>Recent bookings</h3>
+          <div id="recent-bookings" class="bookings-list">
+            <p class="monitor-hint">No bookings yet this session.</p>
+          </div>
+        </div>
+        <div class="monitor-card">
+          <h3>Server status</h3>
+          <div id="server-status" class="status-dot status-unknown">Checking...</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span>Priya — AI Calling Bot</span>
+      <span>Built by RTA</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
