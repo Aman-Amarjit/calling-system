@@ -48,10 +48,26 @@ if errorlevel 1 (
     echo [INFO] GROQ_API_KEY not set — checking for Ollama...
     ollama --version >nul 2>&1
     if errorlevel 1 (
-        echo [WARNING] Ollama not found. Install from https://ollama.com
+        echo [INFO] Ollama not installed. Attempting install...
+        where winget >nul 2>&1
+        if errorlevel 1 (
+            echo [WARNING] winget not found. Install Ollama manually from https://ollama.com
+        ) else (
+            echo [INSTALL] Installing Ollama via winget...
+            winget install --id Ollama.Ollama --silent --accept-package-agreements --accept-source-agreements
+            if errorlevel 1 (
+                echo [WARNING] Ollama install failed. Install from https://ollama.com
+            ) else (
+                echo [INFO] Ollama installed successfully.
+            )
+        )
+    )
+    ollama --version >nul 2>&1
+    if errorlevel 1 (
+        echo [WARNING] Ollama is still not available. Install it manually from https://ollama.com
         echo           Or set GROQ_API_KEY in .env to use Groq instead.
     ) else (
-        echo [OLLAMA] Pulling llama3.2:3b model (first run only, ~2GB)...
+        echo [OLLAMA] Starting Ollama server...
         start "Ollama" /min ollama serve
         timeout /t 3 /nobreak >nul
         ollama pull llama3.2:3b

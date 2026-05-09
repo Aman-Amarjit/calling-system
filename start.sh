@@ -41,6 +41,19 @@ GROQ_KEY=$(grep -E "^GROQ_API_KEY=.+" .env | cut -d= -f2 | tr -d ' ')
 if [ -z "$GROQ_KEY" ]; then
     echo "[INFO] GROQ_API_KEY not set — checking for Ollama..."
     if command -v ollama &>/dev/null; then
+        echo "[OLLAMA] Ollama already installed."
+    else
+        echo "[INFO] Ollama not installed. Attempting install..."
+        if command -v curl &>/dev/null; then
+            curl -fsSL https://ollama.com/install.sh | sh
+        elif command -v wget &>/dev/null; then
+            wget -qO- https://ollama.com/install.sh | sh
+        else
+            echo "[WARNING] Neither curl nor wget is installed. Install Ollama manually from https://ollama.com"
+        fi
+    fi
+
+    if command -v ollama &>/dev/null; then
         echo "[OLLAMA] Starting Ollama server..."
         ollama serve &>/dev/null &
         sleep 2
@@ -48,8 +61,7 @@ if [ -z "$GROQ_KEY" ]; then
         ollama pull llama3.2:3b
         echo "[OLLAMA] Model ready."
     else
-        echo "[WARNING] Ollama not found. Install from https://ollama.com"
-        echo "          Or set GROQ_API_KEY in .env to use Groq instead."
+        echo "[WARNING] Ollama is not available. Install it manually from https://ollama.com or set GROQ_API_KEY in .env to use Groq instead."
     fi
 else
     echo "[INFO] GROQ_API_KEY found — using Groq for LLM."
