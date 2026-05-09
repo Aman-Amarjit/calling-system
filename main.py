@@ -219,9 +219,13 @@ async def process_turn(call_sid: str, transcript: str):
     # Add caller's message to history
     session.history.append({"role": "user", "content": transcript})
 
+    # Update collected fields from this new message
+    from llm import extract_fields_from_text
+    session.collected = extract_fields_from_text(transcript, session.collected)
+
     try:
         # Get LLM response
-        response_text = await get_llm_response(session.history)
+        response_text = await get_llm_response(session.history, session.collected)
         session.history.append({"role": "assistant", "content": response_text})
         print(f"[PRIYA]: {response_text}")
 
