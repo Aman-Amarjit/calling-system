@@ -70,18 +70,22 @@ async def health():
 async def stats():
     """Live stats for the frontend monitor."""
     from session import sessions
+    # Find the most recently confirmed booking by timestamp (not just the first one found)
     latest = None
+    latest_ts = ""
     for s in sessions.values():
         if s.booking_status == "confirmed" and s.collected.get("name"):
-            c = s.collected
-            latest = {
-                "timestamp": c.get("timestamp", ""),
-                "name":      c.get("name", ""),
-                "phone":     c.get("phone", ""),
-                "date":      c.get("date", ""),
-                "time":      c.get("time", ""),
-            }
-            break
+            ts = s.collected.get("timestamp", "")
+            if ts > latest_ts:
+                latest_ts = ts
+                c = s.collected
+                latest = {
+                    "timestamp": ts,
+                    "name":      c.get("name", ""),
+                    "phone":     c.get("phone", ""),
+                    "date":      c.get("date", ""),
+                    "time":      c.get("time", ""),
+                }
     return {"active_calls": len(sessions), "latest_booking": latest}
 
 
