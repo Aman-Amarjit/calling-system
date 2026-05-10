@@ -92,10 +92,9 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
 
     # --- Date ---
     if collected["date"] is None:
-        # Check for month name
+        # Check for month name — use word boundary to avoid "market" matching "mar"
         for month in _MONTHS:
-            if month in lower:
-                # Try to grab the number before/after the month
+            if re.search(r'\b' + month + r'\b', lower):
                 m = re.search(r'(\d{1,2})\s*' + month, lower)
                 if m:
                     collected["date"] = f"{m.group(1)} {month.capitalize()}"
@@ -292,13 +291,15 @@ async def extract_booking_fields(history: list[dict]) -> dict:
                 text = await _call_groq(messages, temperature=0, max_tokens=80)
             else:
                 text = await _call_ollama(messages, temperature=0, max_tokens=80)
-            if "```" in text:
-                text = text.split("```")[1].replace("json", "").strip()
-            llm_fields = json_lib.loads(text)
-            # Only fill in what Python missed
-            for k in collected:
-                if collected[k] is None and llm_fields.get(k):
-                    collected[k] = llm_fields[k]
+            # Strip markdown code fences robustly
+            text = re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
+            # Extract first JSON object from the response
+            json_match = re.search(r'\{.*?\}', text, re.DOTALL)
+            if json_match:
+                llm_fields = json_lib.loads(json_match.group())
+                for k in collected:
+                    if collected[k] is None and llm_fields.get(k):
+                        collected[k] = llm_fields[k]
         except Exception:
             pass
 

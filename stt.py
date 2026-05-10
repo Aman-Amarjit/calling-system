@@ -37,7 +37,12 @@ async def connect_deepgram(call_sid: str, on_transcript_callback):
         try:
             transcript = result.channel.alternatives[0].transcript
             if result.speech_final and transcript.strip():
-                asyncio.create_task(on_transcript_callback(call_sid, transcript))
+                # Deepgram fires this callback from a background thread.
+                # asyncio.create_task() requires the event loop thread — use run_coroutine_threadsafe.
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(
+                    on_transcript_callback(call_sid, transcript), loop
+                )
         except Exception as e:
             print(f"[STT] Error processing transcript: {e}")
 
@@ -53,7 +58,10 @@ async def send_audio(call_sid: str, audio_bytes: bytes):
     """Forward raw audio bytes to the Deepgram connection for this call."""
     conn = deepgram_connections.get(call_sid)
     if conn:
-        conn.send(audio_bytes)
+        try:
+            conn.send(audio_bytes)
+        except Exception as e:
+            print(f"[STT] send_audio error for {call_sid}: {e}")
 
 
 async def disconnect_deepgram(call_sid: str):

@@ -4,6 +4,7 @@ load_dotenv()  # MUST be first — before any custom imports that read os.getenv
 import asyncio
 import glob
 import os
+import datetime
 from contextlib import asynccontextmanager
 
 import telnyx
@@ -33,6 +34,7 @@ REQUIRED_ENV_VARS = [
     "ELEVENLABS_VOICE_ID",
     "GOOGLE_SHEET_ID",
     "GOOGLE_SERVICE_ACCOUNT_JSON",
+    "NGROK_URL",  # required — missing it silently breaks all audio playback and streaming
     # GROQ_API_KEY is optional — omit to use Ollama instead
 ]
 
@@ -155,7 +157,6 @@ async def handle_call_answered(call_sid: str, payload: dict):
         texml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play>{audio_url}</Play>
-  <Stream url="wss://{ngrok_domain}/media/{call_sid}" />
 </Response>'''
         return PlainTextResponse(texml, media_type="text/xml")
     except Exception as e:
@@ -179,9 +180,19 @@ async def handle_playback_ended(call_sid: str, payload: dict):
         return JSONResponse({"status": "no_session"})
 
     if not session.greeting_played:
-        # Greeting just finished — connect Deepgram and start listening
+        # Greeting just finished — start media streaming, connect Deepgram, start listening
         session.greeting_played = True
-        print(f"[STT] Connecting Deepgram: {call_sid}")
+        print(f"[STT] Greeting done, starting media stream + Deepgram: {call_sid}")
+        # Tell Telnyx to start streaming caller audio to our WebSocket
+        ngrok_url    = os.getenv("NGROK_URL", "")
+        ngrok_domain = ngrok_url.replace("https://", "").replace("http://", "")
+        telnyx.api_key = os.getenv("TELNYX_API_KEY")
+        call = await _telnyx(telnyx.Call.retrieve, call_sid)
+        await _telnyx(
+            call.streaming_start,
+            stream_url=f"wss://{ngrok_domain}/media/{call_sid}",
+            stream_track="inbound_track",
+        )
         await connect_deepgram(call_sid, process_turn)
 
     # (Re)start silence timer — bot has finished speaking, caller should respond now
@@ -215,6 +226,14 @@ async def handle_hangup(call_sid: str, payload: dict):
 # Conversation loop
 # ---------------------------------------------------------------------------
 
+async def _append_booking_logged(**kwargs):
+    """Wrapper so Sheets write failures are logged, not silently swallowed."""
+    try:
+        await append_booking(**kwargs)
+    except Exception as e:
+        print(f"[ERROR] Google Sheets write failed: {e}")
+
+
 async def process_turn(call_sid: str, transcript: str):
     """Called when Deepgram fires speech_final. One full LLM + TTS turn."""
     session = get_session(call_sid)
@@ -244,11 +263,10 @@ async def process_turn(call_sid: str, transcript: str):
         if is_booking_confirmed(response_text) and session.booking_status != "confirmed":
             session.booking_status = "confirmed"
             fields = await extract_booking_fields(session.history)
-            import datetime
             fields["timestamp"] = datetime.datetime.now().strftime("%H:%M:%S")
             session.collected.update(fields)
             print(f"[BOOKING] Confirmed: {fields}")
-            asyncio.create_task(append_booking(
+            asyncio.create_task(_append_booking_logged(
                 name=fields.get("name")  or "Unknown",
                 phone=fields.get("phone") or "Unknown",
                 date=fields.get("date")  or "Unknown",
@@ -283,10 +301,13 @@ async def process_turn(call_sid: str, transcript: str):
 
 
 async def _silence_timeout(call_sid: str):
-    """After 5s of silence, play the prompt."""
+    """After 5s of silence, play the prompt — but only if bot is not currently speaking."""
     await asyncio.sleep(5)
     session = get_session(call_sid)
     if not session:
+        return
+    # Don't interrupt if bot is mid-response
+    if session.processing:
         return
     print(f"[SILENCE] 5s timeout: {call_sid}")
     try:

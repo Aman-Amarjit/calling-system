@@ -1,5 +1,8 @@
 // Live monitor — polls the FastAPI backend every 3 seconds
-const API_BASE = "http://localhost:8000";
+// API_BASE auto-detects: same origin when served by FastAPI, localhost for local file open
+const API_BASE = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:")
+  ? "http://localhost:8000"
+  : window.location.origin;
 
 const elActiveCalls   = document.getElementById("active-calls");
 const elBookings      = document.getElementById("recent-bookings");
