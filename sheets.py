@@ -10,8 +10,18 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
 def get_sheets_client():
-    """Build an authenticated Google Sheets client using service account JSON from env."""
-    creds_json = json.loads(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON"))
+    """Build an authenticated Google Sheets client using service account JSON from env or file."""
+    env_val = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not env_val:
+        raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON not set")
+    
+    # If it's a filename, read it. If it's raw JSON, parse it.
+    if env_val.endswith(".json") and os.path.exists(env_val):
+        with open(env_val, "r") as f:
+            creds_json = json.load(f)
+    else:
+        creds_json = json.loads(env_val)
+        
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 

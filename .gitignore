@@ -3,3 +3,7 @@ audio/
 __pycache__/
 *.pyc
 .DS_Store
+google_credentials.json
+.vscode/
+pyrightconfig.json
+test_*.py

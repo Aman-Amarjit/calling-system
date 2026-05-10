@@ -5,12 +5,15 @@ import asyncio
 import glob
 import os
 import datetime
+import json
+import uuid
 from contextlib import asynccontextmanager
 
 import telnyx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from llm import extract_booking_fields, extract_fields_from_text, get_llm_response, is_booking_confirmed
 from sheets import append_booking
@@ -27,15 +30,17 @@ async def _telnyx(fn, *args, **kwargs):
     return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
 REQUIRED_ENV_VARS = [
-    "TELNYX_API_KEY",
-    "TELNYX_PUBLIC_KEY",
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
+]
+
+OPTIONAL_ENV_VARS = [
+    "TELNYX_API_KEY",
+    "TELNYX_PUBLIC_KEY",
+    "NGROK_URL",
     "GOOGLE_SHEET_ID",
     "GOOGLE_SERVICE_ACCOUNT_JSON",
-    "NGROK_URL",  # required — missing it silently breaks all audio playback and streaming
-    # GROQ_API_KEY is optional — omit to use Ollama instead
 ]
 
 
@@ -43,7 +48,11 @@ REQUIRED_ENV_VARS = [
 async def lifespan(app: FastAPI):
     for var in REQUIRED_ENV_VARS:
         if not os.getenv(var):
-            raise RuntimeError(f"Missing required env var: {var}")
+            raise RuntimeError(f"Missing required env var for Web-to-Bot: {var}")
+            
+    for var in OPTIONAL_ENV_VARS:
+        if not os.getenv(var):
+            print(f"[WARNING] Missing {var}. Telnyx calls will not work, but Web-to-Bot will function.")
     yield
 
 
@@ -127,6 +136,80 @@ async def media_stream(websocket: WebSocket, call_sid: str):
     except WebSocketDisconnect:
         print(f"[MEDIA] WebSocket closed: {call_sid}")
         await disconnect_deepgram(call_sid)
+
+
+@app.websocket("/web-call/{session_id}")
+async def web_call_stream(websocket: WebSocket, session_id: str):
+    """Receive audio and control messages from web clients."""
+    await websocket.accept()
+    print(f"[WEB] WebSocket opened: {session_id}")
+    session = create_session(session_id)
+    session.client_type = "web"
+    session.websocket = websocket
+    
+    greeting = (
+        "Namaste Sir, aapka swagat hai hamare appointment centre mein. "
+        "Main Priya bol rahi hoon — aapki kaise sahayata kar sakti hoon? "
+        "Kripaya apna poora naam batayein."
+    )
+    try:
+        filename = await synthesise(greeting)
+        session.audio_files.append(filename)
+        audio_url = f"/audio/{filename}"
+        await websocket.send_json({"type": "audio", "url": audio_url})
+    except Exception as e:
+        print(f"[ERROR] Web greeting TTS failed: {e}")
+
+    await connect_deepgram(session_id, process_turn, is_web=True)
+
+    import struct
+    def get_rms(audio_bytes):
+        if not audio_bytes: return 0
+        count = len(audio_bytes) // 2
+        shorts = struct.unpack(f"<{count}h", audio_bytes)
+        sum_sq = sum(s*s for s in shorts)
+        return (sum_sq / count)**0.5 / 32768.0
+
+    try:
+        while True:
+            message = await websocket.receive()
+            
+            if "bytes" in message:
+                audio_data = message["bytes"]
+                rms = get_rms(audio_data)
+                
+                # Forward actual audio only if it's loud enough to be speech
+                # Otherwise send silence to Deepgram to prevent noise from triggering turns
+                if rms > 0.04:
+                    await send_audio(session_id, audio_data)
+                else:
+                    await send_audio(session_id, b"\x00" * len(audio_data))
+                
+            elif "text" in message:
+                try:
+                    data = json.loads(message["text"])
+                    msg_type = data.get("type")
+                    if msg_type == "interrupt":
+                        session.interrupted = True
+                        session.greeting_played = True
+                        print(f"[WEB] Interrupted: {session_id}")
+                    elif msg_type == "greeting_ended":
+                        session.greeting_played = True
+                        print(f"[WEB] Greeting ended: {session_id}")
+                except Exception as e:
+                    print(f"[ERROR] Web JSON parse failed: {e}")
+    except WebSocketDisconnect:
+        print(f"[WEB] WebSocket closed: {session_id}")
+        await disconnect_deepgram(session_id)
+        if session.silence_timer:
+            session.silence_timer.cancel()
+        for filename in session.audio_files:
+            path = os.path.join("audio", filename)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        delete_session(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -240,15 +323,17 @@ async def _append_booking_logged(**kwargs):
 
 async def process_turn(call_sid: str, transcript: str):
     """Called when Deepgram fires speech_final. One full LLM + TTS turn."""
+    print(f"[PROCESS] Attempting turn for {call_sid}: {transcript!r}")
     session = get_session(call_sid)
     if not session:
         return
 
-    # Race condition guard — drop duplicate transcripts while a turn is in progress
-    if session.processing:
-        print(f"[SKIP] Already processing turn for {call_sid}, dropping: {transcript!r}")
-        return
-    session.processing = True
+    async with session.web_turn_lock:
+        if session.processing:
+            print(f"[SKIP] Already processing turn for {call_sid}, dropping: {transcript!r}")
+            return
+        session.processing = True
+        session.interrupted = False
 
     print(f"[CALLER]: {transcript}")
 
@@ -278,15 +363,27 @@ async def process_turn(call_sid: str, transcript: str):
             ))
 
         filename = await synthesise(response_text)
-        # Track this file so hangup can delete only its own files
         session.audio_files.append(filename)
 
-        ngrok_url = os.getenv("NGROK_URL", "")
-        audio_url = f"{ngrok_url}/audio/{filename}"
-        telnyx.api_key = os.getenv("TELNYX_API_KEY")
-        call = await _telnyx(telnyx.Call.retrieve, call_sid)
-        await _telnyx(call.playback_start, audio_url=audio_url)
-        # Silence timer is restarted in handle_playback_ended once bot finishes speaking
+        if session.client_type == "web":
+            # For web, use a relative path so it works on localhost or ngrok automatically
+            audio_url = f"/audio/{filename}"
+            if session.interrupted:
+                print(f"[WEB] Turn interrupted, dropping audio: {audio_url}")
+            else:
+                try:
+                    await session.websocket.send_json({"type": "audio", "url": audio_url})
+                    print(f"[WEB] Audio sent to client: {audio_url}")
+                except Exception as e:
+                    print(f"[ERROR] Web audio send failed: {e}")
+        else:
+            # For telephony, Telnyx REQUIRES an absolute public URL
+            ngrok_url = os.getenv("NGROK_URL", "")
+            audio_url = f"{ngrok_url}/audio/{filename}"
+            telnyx.api_key = os.getenv("TELNYX_API_KEY")
+            call = await _telnyx(telnyx.Call.retrieve, call_sid)
+            await _telnyx(call.playback_start, audio_url=audio_url)
+            # Silence timer is restarted in handle_playback_ended once bot finishes speaking
 
     except Exception as e:
         print(f"[ERROR] process_turn: {e}")
@@ -295,13 +392,26 @@ async def process_turn(call_sid: str, transcript: str):
             filename  = await synthesise(fallback)
             session.audio_files.append(filename)
             audio_url = f"{os.getenv('NGROK_URL', '')}/audio/{filename}"
-            telnyx.api_key = os.getenv("TELNYX_API_KEY")
-            call = await _telnyx(telnyx.Call.retrieve, call_sid)
-            await _telnyx(call.playback_start, audio_url=audio_url)
+            if session.client_type == "web":
+                if not session.interrupted:
+                    await session.websocket.send_json({"type": "audio", "url": audio_url})
+            else:
+                telnyx.api_key = os.getenv("TELNYX_API_KEY")
+                call = await _telnyx(telnyx.Call.retrieve, call_sid)
+                await _telnyx(call.playback_start, audio_url=audio_url)
         except Exception as fe:
             print(f"[ERROR] Fallback TTS failed: {fe}")
     finally:
         session.processing = False
+
+
+async def _append_booking_logged(name: str, phone: str, date: str, time: str):
+    """Wrapper for sheets.append_booking with logging."""
+    try:
+        from sheets import append_booking
+        await append_booking(name, phone, date, time)
+    except Exception as e:
+        print(f"[ERROR] Sheets logging failed: {e}")
 
 
 async def _silence_timeout(call_sid: str):
@@ -313,6 +423,9 @@ async def _silence_timeout(call_sid: str):
     # Don't interrupt if bot is mid-response
     if session.processing:
         return
+    # Skip for web clients (handled by Deepgram endpointing/VAD)
+    if session.client_type == "web":
+        return
     print(f"[SILENCE] 5s timeout: {call_sid}")
     try:
         filename  = await synthesise(SILENCE_PROMPT)
@@ -323,3 +436,6 @@ async def _silence_timeout(call_sid: str):
         await _telnyx(call.playback_start, audio_url=audio_url)
     except Exception as e:
         print(f"[ERROR] Silence prompt: {e}")
+
+# Mount frontend static files last
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

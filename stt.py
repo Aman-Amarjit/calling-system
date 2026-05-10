@@ -15,7 +15,7 @@ SILENCE_PROMPT = (
 )
 
 
-async def connect_deepgram(call_sid: str, on_transcript_callback):
+async def connect_deepgram(call_sid: str, on_transcript_callback, is_web: bool = False):
     """
     Open a Deepgram live transcription connection for this call.
     on_transcript_callback(call_sid, transcript) is called when speech_final fires.
@@ -23,32 +23,44 @@ async def connect_deepgram(call_sid: str, on_transcript_callback):
     """
     connection = deepgram_client.listen.live.v("1")
 
-    options = LiveOptions(
-        model="nova-2",
-        language="hi",
-        detect_language=False,
-        encoding="mulaw",
-        sample_rate=8000,
-        endpointing=300,
-        interim_results=False,
-    )
+    if is_web:
+        options = LiveOptions(
+            model="nova-2",
+            language="hi",
+            encoding="linear16",
+            sample_rate=48000,
+            channels=1,
+            endpointing=1000,
+            interim_results=True,
+        )
+    else:
+        options = LiveOptions(
+            model="nova-2",
+            language="hi",
+            encoding="mulaw",
+            sample_rate=8000,
+            endpointing=1000,
+            interim_results=True,
+        )
+
+    main_loop = asyncio.get_running_loop()
 
     def on_message(self, result, **kwargs):
         try:
             transcript = result.channel.alternatives[0].transcript
+            print(f"[STT RAW] '{transcript}' | final: {result.speech_final}")
             if result.speech_final and transcript.strip():
                 # Deepgram fires this callback from a background thread.
                 # asyncio.create_task() requires the event loop thread — use run_coroutine_threadsafe.
-                loop = asyncio.get_event_loop()
                 asyncio.run_coroutine_threadsafe(
-                    on_transcript_callback(call_sid, transcript), loop
+                    on_transcript_callback(call_sid, transcript), main_loop
                 )
         except Exception as e:
             print(f"[STT] Error processing transcript: {e}")
 
     connection.on(LiveTranscriptionEvents.Transcript, on_message)
 
-    await connection.start(options)
+    connection.start(options, keep_alive=True)
     deepgram_connections[call_sid] = connection
     print(f"[STT] Deepgram connected for call: {call_sid}")
     return connection
@@ -68,5 +80,5 @@ async def disconnect_deepgram(call_sid: str):
     """Close and remove the Deepgram connection for this call."""
     conn = deepgram_connections.pop(call_sid, None)
     if conn:
-        await conn.finish()
+        conn.finish()
         print(f"[STT] Deepgram disconnected for call: {call_sid}")

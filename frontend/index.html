@@ -51,6 +51,25 @@
     </div>
   </section>
 
+  <!-- WEB CALL SECTION -->
+  <section class="section" id="web-call">
+    <div class="container text-center">
+      <h2>Try the Live Demo (Free)</h2>
+      <p class="section-sub">
+        Talk to Priya directly from your browser. We use Voice Activity Detection (VAD) to know when you're speaking.
+      </p>
+      
+      <div class="web-call-card">
+        <div id="web-call-status" class="status-indicator">Ready to call</div>
+        <div id="volume-meter-container" style="display:none; width:100%; height:8px; background:#e5e7eb; border-radius:4px; margin-top:10px; overflow:hidden;">
+          <div id="volume-meter-bar" style="width:0%; height:100%; background:#10b981; transition:width 0.1s;"></div>
+        </div>
+        <button id="btn-start-call" class="btn btn-primary" style="margin-top: 1rem; width: 200px;">Start Call</button>
+        <button id="btn-end-call" class="btn btn-outline" style="margin-top: 1rem; width: 200px; display: none;">End Call</button>
+      </div>
+    </div>
+  </section>
+
   <!-- DEMO SECTION -->
   <section class="section" id="demo">
     <div class="container">

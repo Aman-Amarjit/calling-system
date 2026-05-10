@@ -20,8 +20,7 @@ async def synthesise(text: str) -> str:
     voice_id = os.getenv("ELEVENLABS_VOICE_ID")
     loop = asyncio.get_running_loop()
 
-    # client.generate() is synchronous and blocks for 300–800ms — run in executor
-    # Also consume the generator there since it's a sync iterator
+    print(f"[TTS] Synthesising: {text[:50]}...")
     audio_bytes = await loop.run_in_executor(
         None,
         lambda: b"".join(client.generate(
@@ -38,4 +37,5 @@ async def synthesise(text: str) -> str:
     async with aiofiles.open(path, "wb") as f:
         await f.write(audio_bytes)
 
+    print(f"[TTS] Saved to {filename}")
     return filename

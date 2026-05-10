@@ -1,10 +1,13 @@
 import asyncio
+import typing
 from dataclasses import dataclass, field
 
 
 @dataclass
 class Session:
     call_sid: str
+    client_type: str = "telnyx"
+    websocket: typing.Any = None
     history: list[dict] = field(default_factory=list)
     collected: dict = field(
         default_factory=lambda: {"name": None, "phone": None, "date": None, "time": None}
@@ -14,6 +17,8 @@ class Session:
     greeting_played: bool = False  # set True after first call.playback.ended
     audio_files: list[str] = field(default_factory=list)  # filenames generated for this call
     processing: bool = False  # True while a process_turn is running — prevents race conditions
+    interrupted: bool = False
+    web_turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 sessions: dict[str, Session] = {}
