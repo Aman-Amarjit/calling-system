@@ -7,6 +7,7 @@ const API_BASE = (window.location.hostname === "localhost" || window.location.ho
 const elActiveCalls   = document.getElementById("active-calls");
 const elBookings      = document.getElementById("recent-bookings");
 const elServerStatus  = document.getElementById("server-status");
+const elLiveTranscript = document.getElementById("live-transcript");
 
 // Recent bookings stored in memory for this session
 const recentBookings = [];
@@ -96,6 +97,7 @@ function updateStatus(text, className) {
 
 async function startWebCall() {
   updateStatus("Connecting...", "");
+  if (elLiveTranscript) elLiveTranscript.textContent = "";
   elBtnStart.style.display = "none";
   elBtnEnd.style.display = "inline-block";
 
@@ -130,6 +132,8 @@ async function startWebCall() {
         const msg = JSON.parse(event.data);
         if (msg.type === "audio" && msg.url) {
           playBotAudio(msg.url);
+        } else if (msg.type === "interim" && msg.text) {
+          if (elLiveTranscript) elLiveTranscript.textContent = `Hearing: "${msg.text}..."`;
         }
       } catch (e) {
         console.error("Invalid WS message", e);
@@ -149,6 +153,7 @@ function playBotAudio(url) {
   }
   
   updateStatus("Bot Speaking...", "status-speaking");
+  if (elLiveTranscript) elLiveTranscript.textContent = ""; // Clear transcript when bot replies
   window._botStartTime = Date.now();
   const audioUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
   currentBotAudio = new Audio(audioUrl);
@@ -166,7 +171,7 @@ function playBotAudio(url) {
 }
 
 function startAudioCapture() {
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
   const source = audioContext.createMediaStreamSource(micStream);
   
   // Create a ScriptProcessorNode with bufferSize 4096 and 1 output channel
@@ -248,16 +253,8 @@ function startAudioCapture() {
       result[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
     }
     
-    // Only send audio to the server if it's loud enough to be intentional
-    // If bot is speaking, we use a much stricter 'forwarding' threshold to block echo
-    const forwardingThreshold = currentBotAudio ? (VAD_THRESHOLD * 1.5) : (VAD_THRESHOLD * 0.5);
-    
-    if (rms > forwardingThreshold) {
-      webSocket.send(result.buffer);
-    } else {
-      // Send digital silence to keep Deepgram connection alive without sending echo
-      webSocket.send(new Int16Array(result.length).buffer);
-    }
+    // Always send audio to the server for now to debug transcription issues
+    webSocket.send(result.buffer);
   };
 }
 
@@ -284,6 +281,7 @@ function endWebCall() {
   }
   
   updateStatus("Call ended.", "");
+  if (elLiveTranscript) elLiveTranscript.textContent = "";
   if (elBtnStart && elBtnEnd) {
     elBtnStart.style.display = "inline-block";
     elBtnEnd.style.display = "none";

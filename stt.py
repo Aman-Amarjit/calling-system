@@ -3,7 +3,7 @@ import os
 
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 
-deepgram_client = DeepgramClient(api_key=os.getenv("DEEPGRAM_API_KEY"))
+deepgram_client = DeepgramClient(api_key=str(os.getenv("DEEPGRAM_API_KEY", "")))
 
 # Store active Deepgram connections keyed by call_sid
 deepgram_connections: dict = {}
@@ -15,10 +15,11 @@ SILENCE_PROMPT = (
 )
 
 
-async def connect_deepgram(call_sid: str, on_transcript_callback, is_web: bool = False):
+async def connect_deepgram(call_sid: str, on_transcript_callback, on_interim_callback=None, is_web: bool = False):
     """
     Open a Deepgram live transcription connection for this call.
     on_transcript_callback(call_sid, transcript) is called when speech_final fires.
+    on_interim_callback(call_sid, transcript) is called for interim results.
     Returns the Deepgram connection object.
     """
     connection = deepgram_client.listen.live.v("1")
@@ -30,7 +31,8 @@ async def connect_deepgram(call_sid: str, on_transcript_callback, is_web: bool =
             encoding="linear16",
             sample_rate=48000,
             channels=1,
-            endpointing=1000,
+            endpointing=500, # type: ignore
+            utterance_end_ms=1000, # type: ignore
             interim_results=True,
         )
     else:
@@ -39,26 +41,56 @@ async def connect_deepgram(call_sid: str, on_transcript_callback, is_web: bool =
             language="hi",
             encoding="mulaw",
             sample_rate=8000,
-            endpointing=1000,
+            endpointing=500, # type: ignore
+            utterance_end_ms=1000, # type: ignore
             interim_results=True,
         )
 
     main_loop = asyncio.get_running_loop()
+    # Track the latest transcript to handle UtteranceEnd as a fallback for speech_final
+    last_transcript = ""
 
     def on_message(self, result, **kwargs):
+        nonlocal last_transcript
         try:
             transcript = result.channel.alternatives[0].transcript
-            print(f"[STT RAW] '{transcript}' | final: {result.speech_final}")
-            if result.speech_final and transcript.strip():
-                # Deepgram fires this callback from a background thread.
-                # asyncio.create_task() requires the event loop thread — use run_coroutine_threadsafe.
+            if not transcript.strip():
+                return
+            
+            last_transcript = transcript
+
+            if result.speech_final:
+                print(f"[STT FINAL] '{transcript}'")
+                last_transcript = "" # Reset
                 asyncio.run_coroutine_threadsafe(
                     on_transcript_callback(call_sid, transcript), main_loop
+                )
+            elif on_interim_callback:
+                print(f"[STT INTERIM] '{transcript}'")
+                asyncio.run_coroutine_threadsafe(
+                    on_interim_callback(call_sid, transcript), main_loop
                 )
         except Exception as e:
             print(f"[STT] Error processing transcript: {e}")
 
+    def on_utterance_end(self, *args, **kwargs):
+        """Fires when Deepgram is fully confident the utterance is complete."""
+        nonlocal last_transcript
+        print(f"[STT] Utterance end confirmed for {call_sid}")
+        if last_transcript.strip():
+            print(f"[STT FALLBACK] Triggering final from UtteranceEnd: '{last_transcript}'")
+            transcript_to_send = last_transcript
+            last_transcript = "" # Prevent double trigger
+            asyncio.run_coroutine_threadsafe(
+                on_transcript_callback(call_sid, transcript_to_send), main_loop
+            )
+
+    def on_error(self, error, **kwargs):
+        print(f"[STT] Deepgram error for {call_sid}: {error}")
+
     connection.on(LiveTranscriptionEvents.Transcript, on_message)
+    connection.on(LiveTranscriptionEvents.UtteranceEnd, on_utterance_end)
+    connection.on(LiveTranscriptionEvents.Error, on_error)
 
     connection.start(options, keep_alive=True)
     deepgram_connections[call_sid] = connection

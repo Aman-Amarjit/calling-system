@@ -53,6 +53,7 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
     Returns updated dict.
     """
     collected = dict(existing)
+    print(f"[EXTRACTOR] Input: '{text}' | Before: {existing}")
     lower = text.lower()
     words = lower.split()
 
@@ -63,10 +64,9 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
             collected["phone"] = m.group()
 
     # --- Name ---
-    # Patterns: "mera naam X hai", "main X hoon", "I am X", "naam X"
     if collected["name"] is None:
         name_patterns = [
-            # "mera naam Rahul hai" — capture stops before hai/hoon
+            # "mera naam Rahul hai"
             r"(?:mera|meri|my|main|mai)\s+naam\s+([A-Za-z]+(?:\s+[A-Za-z]+?)?)\s*(?:\bhai\b|\bhe\b|\bhoon\b|\bhun\b|\bh\b|$)",
             # "naam Rahul" or "naam hai Rahul"
             r"\bnaam\s+(?:hai\s+)?([A-Za-z]{2,})\b",
@@ -74,17 +74,23 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
             r"(?:i am|i'm|myself)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
             # "Rahul bol raha hoon" / "Rahul speaking"
             r"([A-Za-z]{3,}(?:\s+[A-Za-z]+)?)\s+(?:bol|speaking|here|bolta|bolti)",
+            # "Rahul hoon" / "Rahul hun"
+            r"([A-Za-z]{2,}(?:\s+[A-Za-z]+)?)\s+(?:hoon|hun)\b",
+            # "Rahul hai naam mera"
+            r"([A-Za-z]{2,}(?:\s+[A-Za-z]+)?)\s+hai\s+naam",
+            # bare name — only as last resort (single word reply to 'apna naam batayein')
+            r"^([A-Za-z]{2,}(?:\s+[A-Za-z]+)?)$",
         ]
         _STOP_WORDS = {
             "hello","hi","haan","nahi","okay","ok","yes","no","sir","madam",
             "hai","he","hoon","hun","h","aur","or","aap","main","mera","meri",
             "naam","number","phone","date","time","appointment","booking",
+            "kal","aaj","parso","subah","shaam","raat","dopahar",
         }
         for pat in name_patterns:
             m = re.search(pat, lower)
             if m:
                 name = m.group(1).strip().title()
-                # Reject if any word in the captured name is a stop word
                 name_words = name.lower().split()
                 if not any(w in _STOP_WORDS for w in name_words) and len(name_words[0]) >= 2:
                     collected["name"] = name
@@ -147,6 +153,7 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
                         collected["time"] = f"{num} baje"
                     break
 
+    print(f"[EXTRACTOR] After:  {collected}")
     return collected
 
 
@@ -169,54 +176,57 @@ def get_next_question(collected: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 def build_system_prompt(collected: dict, next_field: str | None) -> str:
-    """Build a focused system prompt that tells the LLM exactly what to do next."""
+    """Build a tightly-constrained prompt. Small models need hard rules, not suggestions."""
+    known = {k: v for k, v in collected.items() if v is not None}
+    known_str = ", ".join(f"{k}={v}" for k, v in known.items()) or "nothing yet"
 
-    known = []
-    if collected["name"]:    known.append(f"name: {collected['name']}")
-    if collected["phone"]:   known.append(f"phone: {collected['phone']}")
-    if collected["date"]:    known.append(f"date: {collected['date']}")
-    if collected["time"]:    known.append(f"time: {collected['time']}")
+    if next_field is not None:
+        base = f"""You are Priya, a booking assistant. Respond in Hinglish only.
 
-    known_str = (", ".join(known)) if known else "nothing yet"
+CONFIRMED FACTS (do not question, repeat, or re-ask these):
+{known_str}
 
-    field_instructions = {
-        "name":  "Ask for the caller's full name only. Be warm and welcoming.",
-        "phone": "Ask for the caller's phone number only. Repeat their name to acknowledge them first.",
-        "date":  "Ask for their preferred APPOINTMENT date. Suggest 'Aaaj ya kal?' (Today or tomorrow?). NEVER ask for their date of birth.",
-        "time":  "Ask for their preferred appointment time. Suggest 'Subah ya shaam?' (Morning or evening?) to guide them.",
-        None:    (
-            f"You have all details: naam {collected['name']}, "
-            f"number {collected['phone']}, date {collected['date']}, "
-            f"time {collected['time']}. "
-            f"Read them back CLEARLY and ask 'Kya ye sab sahi hai?' (Is this all correct?)"
-        ),
-    }
+YOUR ONLY JOB RIGHT NOW: Ask for '{next_field}' in one warm sentence.
 
-    base = f"""You are Priya, a highly professional and extremely respectful appointment booking assistant.
-Speak in polite, formal Hinglish (Hindi + English mix). Your tone must be warm, courteous, and very respectful.
+HARD RULES:
+- Reply in UNDER 20 words
+- Do NOT invent, assume, or repeat any field value
+- Do NOT say booking is confirmed unless instructed
+- Do NOT ask for anything except '{next_field}'
+- Do NOT explain yourself
+- If caller goes off-topic, say "zaroor" and redirect to '{next_field}'
 
-WHAT YOU ALREADY KNOW: {known_str}
+FEW-SHOT EXAMPLES (follow this style exactly):
+Caller: "Mera naam Rahul hai"
+Priya: "Shukriya Rahul ji! Aapka phone number kya hai?"
 
-YOUR NEXT TASK: {field_instructions[next_field]}
+Caller: "9876543210"
+Priya: "Perfect! Kaunsi date pe appointment chahiye aapko?"
 
-RULES OF RESPECT (MANDATORY):
-- ALWAYS use "Aap" (never "Tum").
-- ALWAYS add "Ji" after the user's name (e.g., "Rahul Ji").
-- Use respectful words like "Shukriya", "Kripaya", and "Bilkul".
-- NEVER use informal fillers like "Arey", "Yaar", "Abey", or "Hmm".
-- If you already know the user's name, DO NOT re-introduce yourself. Skip straight to the task.
-- When the user provides a new detail, acknowledge it with respect (e.g., "Bahut badhiya, [Aapka Naam] Ji. Ab kripaya apna number batayein?")
-- Reply in under 25 words
-- Never ask for information you already have
-- Never mention you are an AI
-- If caller's answer is unclear, ask only about that unclear part respectfully."""
+Caller: "Kal"
+Priya: "Bilkul! Subah ya shaam — kaunsa time prefer karenge aap?"
 
-    if next_field is None:
-        base += f"""
+Notice: Short. Warm. Asks exactly one thing. Never invents details."""
 
-AFTER CALLER CONFIRMS: Reply with EXACTLY:
-"Bahut shukriya {collected['name']} ji. Aapki appointment booking confirmed ho gayi hai. Aapko jald hi confirmation milega."
-The phrase "booking confirmed" MUST appear."""
+        # Hard guardrail — belt-and-suspenders against re-asking
+        do_not_ask = [k for k, v in collected.items() if v is not None]
+        if do_not_ask:
+            base += f"\n\nDO NOT ask for: {', '.join(do_not_ask)}. Asking again is an error."
+
+    else:
+        name  = collected.get("name", "")
+        phone = collected.get("phone", "")
+        date  = collected.get("date", "")
+        time  = collected.get("time", "")
+        base = f"""You are Priya. All booking details are confirmed.
+
+CONFIRMED: name={name}, phone={phone}, date={date}, time={time}
+
+Say EXACTLY this (do not change a single word):
+"Shukriya {name} ji. Aapki appointment {date} ko {time} baje confirmed ho gayi hai. Aapko jald confirmation milega. Dhanyavaad!"
+
+The phrase 'booking confirmed' MUST appear somewhere in your reply.
+Do not add anything else."""
 
     return base
 
@@ -226,9 +236,10 @@ The phrase "booking confirmed" MUST appear."""
 # ---------------------------------------------------------------------------
 
 async def _call_groq(messages: list[dict], temperature: float, max_tokens: int) -> str:
+    assert groq_client is not None, "GROQ_API_KEY is not set"
     response = await groq_client.chat.completions.create(
         model="llama3-8b-8192",
-        messages=messages,
+        messages=messages, # type: ignore
         temperature=temperature,
         max_tokens=max_tokens,
     )
@@ -246,6 +257,9 @@ async def _call_ollama(messages: list[dict], temperature: float, max_tokens: int
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens,
+                    "num_ctx": 512,        # small context = much faster first token
+                    "num_thread": 8,       # match your CPU core count
+                    "repeat_penalty": 1.0, # disabled = slightly faster sampling
                 },
             },
         )
@@ -260,10 +274,56 @@ async def get_llm_response(history: list[dict], collected: dict) -> str:
     """
     next_field = get_next_question(collected)
     system = build_system_prompt(collected, next_field)
-    messages = [{"role": "system", "content": system}] + history
+    trimmed = history[-4:]
+    messages = [{"role": "system", "content": system}] + trimmed
     if USE_GROQ:
-        return await _call_groq(messages, temperature=0.7, max_tokens=100)
-    return await _call_ollama(messages, temperature=0.7, max_tokens=100)
+        return await _call_groq(messages, temperature=0.2, max_tokens=60)  # low temp = deterministic
+    return await _call_ollama(messages, temperature=0.1, max_tokens=60)    # was 0.7
+
+
+async def get_llm_response_streaming(history: list[dict], collected: dict):
+    """
+    Async generator: yields text sentence-by-sentence as Ollama streams tokens.
+    Allows TTS synthesis of the first sentence before the LLM finishes the rest.
+    Only used with Ollama (Groq latency is already low enough to not need streaming).
+    """
+    next_field = get_next_question(collected)
+    system = build_system_prompt(collected, next_field)
+    trimmed = history[-4:]
+    messages = [{"role": "system", "content": system}] + trimmed
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        async with client.stream(
+            "POST",
+            f"{OLLAMA_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": messages,
+                "stream": True,
+                "options": {"num_predict": 60, "num_ctx": 512},
+            },
+        ) as resp:
+            buffer = ""
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json_lib.loads(line)
+                except Exception:
+                    continue
+                buffer += chunk.get("message", {}).get("content", "")
+                # Yield every complete sentence immediately
+                while any(p in buffer for p in ["।", ".", "?", "!"]):
+                    for punct in ["।", ".", "?", "!"]:
+                        if punct in buffer:
+                            sentence, buffer = buffer.split(punct, 1)
+                            sentence = sentence.strip()
+                            if sentence:
+                                yield sentence + punct
+                            break
+            # Flush any remaining text
+            if buffer.strip():
+                yield buffer.strip()
 
 
 def is_booking_confirmed(text: str) -> bool:
@@ -271,40 +331,61 @@ def is_booking_confirmed(text: str) -> bool:
     return "booking confirmed" in text.lower()
 
 
+async def _call_ollama_json(messages: list[dict]) -> dict:
+    """Forces Ollama to return valid JSON via format=json — no hallucinated prose."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{OLLAMA_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": messages,
+                "stream": False,
+                "format": "json",  # Ollama native JSON mode
+                "options": {
+                    "temperature": 0,
+                    "num_predict": 80,
+                    "num_ctx": 512,
+                },
+            },
+        )
+        resp.raise_for_status()
+        return json_lib.loads(resp.json()["message"]["content"])
+
+
 async def extract_booking_fields(history: list[dict]) -> dict:
     """
-    Extract structured booking fields — tries Python regex first,
-    falls back to LLM extraction only if regex missed something.
+    Extract structured booking fields — Python regex first (never hallucinates),
+    then LLM JSON extraction only for anything still missing.
     """
-    # Rebuild from full conversation using Python extractor
     collected = {"name": None, "phone": None, "date": None, "time": None}
     for msg in history:
         if msg["role"] == "user":
             collected = extract_fields_from_text(msg["content"], collected)
 
-    # If anything still missing, try LLM extraction as fallback
     if any(v is None for v in collected.values()):
         extraction_prompt = (
-            "From the conversation above, extract booking details. "
-            "Return ONLY valid JSON with keys: name, phone, date, time. "
-            "Use null for missing fields. No explanation, just JSON."
+            "Extract booking fields from the conversation. "
+            "Return JSON with exactly these keys: name, phone, date, time. "
+            "Use null for anything not mentioned. Return ONLY the JSON object."
         )
         messages = history + [{"role": "user", "content": extraction_prompt}]
         try:
             if USE_GROQ:
                 text = await _call_groq(messages, temperature=0, max_tokens=80)
+                text = re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
+                json_match = re.search(r'\{.*?\}', text, re.DOTALL)
+                if json_match:
+                    llm_fields = json_lib.loads(json_match.group())
+                    for k in collected:
+                        if collected[k] is None and llm_fields.get(k):
+                            collected[k] = llm_fields[k]
             else:
-                text = await _call_ollama(messages, temperature=0, max_tokens=80)
-            # Strip markdown code fences robustly
-            text = re.sub(r'```(?:json)?\s*', '', text).strip().rstrip('`').strip()
-            # Extract first JSON object from the response
-            json_match = re.search(r'\{.*?\}', text, re.DOTALL)
-            if json_match:
-                llm_fields = json_lib.loads(json_match.group())
+                # Ollama: use format=json for guaranteed valid JSON output
+                llm_fields = await _call_ollama_json(messages)
                 for k in collected:
                     if collected[k] is None and llm_fields.get(k):
                         collected[k] = llm_fields[k]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[LLM] JSON extraction failed: {e}")
 
     return collected
