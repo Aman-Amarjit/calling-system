@@ -1,3 +1,4 @@
+import asyncio
 import os
 from uuid import uuid4
 
@@ -13,20 +14,22 @@ client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
 async def synthesise(text: str) -> str:
     """
     Convert text to speech using ElevenLabs.
-    Saves audio to audio/{uuid}.mp3 using non-blocking aiofiles.
+    Both the API call and file write are non-blocking.
     Returns the filename (not full URL).
     """
     voice_id = os.getenv("ELEVENLABS_VOICE_ID")
+    loop = asyncio.get_running_loop()
 
-    # generate() returns a generator of audio chunks
-    audio_generator = client.generate(
-        text=text,
-        voice=voice_id,
-        model="eleven_multilingual_v2",  # supports Hinglish
+    # client.generate() is synchronous and blocks for 300–800ms — run in executor
+    # Also consume the generator there since it's a sync iterator
+    audio_bytes = await loop.run_in_executor(
+        None,
+        lambda: b"".join(client.generate(
+            text=text,
+            voice=voice_id,
+            model="eleven_multilingual_v2",  # supports Hinglish
+        )),
     )
-
-    # Collect all chunks into bytes
-    audio_bytes = b"".join(audio_generator)
 
     filename = f"{uuid4()}.mp3"
     path = f"audio/{filename}"

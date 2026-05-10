@@ -167,16 +167,28 @@ async def handle_call_answered(call_sid: str, payload: dict):
 
 
 async def handle_playback_ended(call_sid: str, payload: dict):
-    """Connect Deepgram only after the greeting finishes — not on every playback end."""
+    """
+    Two jobs:
+    1. First playback (greeting) → connect Deepgram, start silence timer.
+    2. Subsequent playbacks (bot responses) → restart silence timer NOW,
+       because the bot just finished speaking and the caller is about to respond.
+    """
     print(f"[CALL] Playback ended: {call_sid}")
     session = get_session(call_sid)
     if not session:
         return JSONResponse({"status": "no_session"})
+
     if not session.greeting_played:
+        # Greeting just finished — connect Deepgram and start listening
         session.greeting_played = True
         print(f"[STT] Connecting Deepgram: {call_sid}")
         await connect_deepgram(call_sid, process_turn)
-        session.silence_timer = asyncio.create_task(_silence_timeout(call_sid))
+
+    # (Re)start silence timer — bot has finished speaking, caller should respond now
+    if session.silence_timer:
+        session.silence_timer.cancel()
+    session.silence_timer = asyncio.create_task(_silence_timeout(call_sid))
+
     return JSONResponse({"status": "ok"})
 
 
@@ -208,6 +220,12 @@ async def process_turn(call_sid: str, transcript: str):
     session = get_session(call_sid)
     if not session:
         return
+
+    # Race condition guard — drop duplicate transcripts while a turn is in progress
+    if session.processing:
+        print(f"[SKIP] Already processing turn for {call_sid}, dropping: {transcript!r}")
+        return
+    session.processing = True
 
     print(f"[CALLER]: {transcript}")
 
@@ -246,8 +264,7 @@ async def process_turn(call_sid: str, transcript: str):
         telnyx.api_key = os.getenv("TELNYX_API_KEY")
         call = await _telnyx(telnyx.Call.retrieve, call_sid)
         await _telnyx(call.playback_start, audio_url=audio_url)
-
-        session.silence_timer = asyncio.create_task(_silence_timeout(call_sid))
+        # Silence timer is restarted in handle_playback_ended once bot finishes speaking
 
     except Exception as e:
         print(f"[ERROR] process_turn: {e}")
@@ -261,6 +278,8 @@ async def process_turn(call_sid: str, transcript: str):
             await _telnyx(call.playback_start, audio_url=audio_url)
         except Exception as fe:
             print(f"[ERROR] Fallback TTS failed: {fe}")
+    finally:
+        session.processing = False
 
 
 async def _silence_timeout(call_sid: str):
