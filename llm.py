@@ -3,7 +3,7 @@ import os
 import re
 
 import httpx
-from groq import Groq
+from groq import AsyncGroq
 
 # ---------------------------------------------------------------------------
 # LLM backend selection
@@ -11,7 +11,7 @@ from groq import Groq
 # Otherwise             → use local Ollama (llama3.2:3b, free, ~3-5s on CPU)
 # ---------------------------------------------------------------------------
 USE_GROQ = bool(os.getenv("GROQ_API_KEY"))
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY")) if USE_GROQ else None
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY")) if USE_GROQ else None
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
@@ -27,10 +27,6 @@ _MONTHS = [
     "january","february","march","april","may","june",
     "july","august","september","october","november","december",
     "jan","feb","mar","apr","jun","jul","aug","sep","oct","nov","dec",
-    "janeiro","febrero","marzo","abril","mayo","junio","julio",
-    # Hindi month names
-    "january","february","march","april","may","june",
-    "july","august","september","october","november","december",
 ]
 
 _DATE_WORDS = [
@@ -70,17 +66,27 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
     # Patterns: "mera naam X hai", "main X hoon", "I am X", "naam X"
     if collected["name"] is None:
         name_patterns = [
-            r"(?:mera|meri|my|main|mai)\s+naam\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:hai|he|hoon|hun|h\b|$)",
-            r"naam\s+(?:hai\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+            # "mera naam Rahul hai" — capture stops before hai/hoon
+            r"(?:mera|meri|my|main|mai)\s+naam\s+([A-Za-z]+(?:\s+[A-Za-z]+?)?)\s*(?:\bhai\b|\bhe\b|\bhoon\b|\bhun\b|\bh\b|$)",
+            # "naam Rahul" or "naam hai Rahul"
+            r"\bnaam\s+(?:hai\s+)?([A-Za-z]{2,})\b",
+            # "I am Rahul" / "I'm Rahul" / "myself Rahul"
             r"(?:i am|i'm|myself)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
-            r"([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:bol|speaking|here|bolta|bolti)",
+            # "Rahul bol raha hoon" / "Rahul speaking"
+            r"([A-Za-z]{3,}(?:\s+[A-Za-z]+)?)\s+(?:bol|speaking|here|bolta|bolti)",
         ]
+        _STOP_WORDS = {
+            "hello","hi","haan","nahi","okay","ok","yes","no","sir","madam",
+            "hai","he","hoon","hun","h","aur","or","aap","main","mera","meri",
+            "naam","number","phone","date","time","appointment","booking",
+        }
         for pat in name_patterns:
             m = re.search(pat, lower)
             if m:
                 name = m.group(1).strip().title()
-                # Filter out common non-name words
-                if name.lower() not in {"hello","hi","haan","nahi","okay","ok","yes","no","sir","madam"}:
+                # Reject if any word in the captured name is a stop word
+                name_words = name.lower().split()
+                if not any(w in _STOP_WORDS for w in name_words) and len(name_words[0]) >= 2:
                     collected["name"] = name
                     break
 
@@ -217,7 +223,7 @@ The phrase "booking confirmed" MUST appear."""
 # ---------------------------------------------------------------------------
 
 async def _call_groq(messages: list[dict], temperature: float, max_tokens: int) -> str:
-    response = groq_client.chat.completions.create(
+    response = await groq_client.chat.completions.create(
         model="llama3-8b-8192",
         messages=messages,
         temperature=temperature,

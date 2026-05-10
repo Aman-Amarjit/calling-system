@@ -12,6 +12,7 @@ class Session:
     booking_status: str = "pending"
     silence_timer: asyncio.Task | None = None
     greeting_played: bool = False  # set True after first call.playback.ended
+    audio_files: list[str] = field(default_factory=list)  # filenames generated for this call
 
 
 sessions: dict[str, Session] = {}
