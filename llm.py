@@ -19,7 +19,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 # FIELD EXTRACTION — done in Python, not by the LLM
 # ---------------------------------------------------------------------------
 
-_PHONE_RE = re.compile(r'\b[6-9]\d{9}\b')
+_PHONE_RE = re.compile(r'\b[6-9][\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d[\s-]*\d\b')
 
 _MONTHS = [
     "january","february","march","april","may","june",
@@ -49,19 +49,19 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
     if collected["name"] is None:
         name_patterns = [
             # "mera naam Rahul hai"
-            r"(?:mera|meri|my|main|mai)\s+naam\s+([A-Za-z]+(?:\s+[A-Za-z]+?)?)\s*(?:\bhai\b|\bhe\b|\bhoon\b|\bhun\b|\bh\b|$)",
+            r"(?:mera|meri|my|main|mai)\s+naam\s+([\w\u0900-\u097F]+(?:\s+[\w\u0900-\u097F]+?)?)\s*(?:\bhai\b|\bhe\b|\bhoon\b|\bhun\b|\bh\b|[.!?]|$)",
             # "naam Rahul" or "naam hai Rahul"
-            r"\bnaam\s+(?:hai\s+)?([A-Za-z]{2,})\b",
+            r"\bnaam\s+(?:hai\s+)?([\w\u0900-\u097F]{2,})\b",
             # "I am Rahul" / "I'm Rahul" / "myself Rahul"
-            r"(?:i am|i'm|myself)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+            r"(?:i am|i'm|myself)\s+([\w\u0900-\u097F]+(?:\s+[\w\u0900-\u097F]+)?)",
             # "Rahul bol raha hoon" / "Rahul speaking"
-            r"([A-Za-z]{3,}(?:\s+[A-Za-z]+)?)\s+(?:bol|speaking|here|bolta|bolti)",
+            r"([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)\s+(?:bol|speaking|here|bolta|bolti)",
             # "Rahul hoon" / "Rahul hun"
-            r"([A-Za-z]{2,}(?:\s+[A-Za-z]+)?)\s+(?:hoon|hun)\b",
+            r"([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)\s+(?:hoon|hun)\b",
             # "Rahul hai naam mera"
-            r"([A-Za-z]{2,}(?:\s+[A-Za-z]+)?)\s+hai\s+naam",
+            r"([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)\s+hai\s+naam",
             # bare name — only as last resort (single word reply to 'apna naam batayein')
-            r"^([A-Za-z]{2,}(?:\s+[A-Za-z]+)?)$",
+            r"^\s*([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)[.!?]?\s*$",
         ]
         _STOP_WORDS = {
             "hello","hi","haan","nahi","okay","ok","yes","no","sir","madam",
