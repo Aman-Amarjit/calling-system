@@ -25,6 +25,9 @@ _MONTHS = [
     "january","february","march","april","may","june",
     "july","august","september","october","november","december",
     "jan","feb","mar","apr","jun","jul","aug","sep","oct","nov","dec",
+    # Hindi month names
+    "janvari","farvari","march","april","mai","jun",
+    "julai","agast","sitambar","aktubar","navambar","disambar",
 ]
 
 
@@ -206,10 +209,10 @@ Remember: Sound warm, helpful, and human. Avoid being a strict robot."""
             base += f"\n\nDO NOT ask for: {', '.join(do_not_ask)}."
 
     else:
-        name  = collected.get("name", "")
-        phone = collected.get("phone", "")
-        date  = collected.get("date", "")
-        time  = collected.get("time", "")
+        name  = collected.get("name")  or "aap"
+        phone = collected.get("phone") or "aapka number"
+        date  = collected.get("date")  or "nirdharit date"
+        time  = collected.get("time")  or "nirdharit time"
         base = f"""You are Priya. The booking is complete.
 
 CONFIRMED: name={name}, phone={phone}, date={date}, time={time}
@@ -261,16 +264,23 @@ async def _call_ollama(messages: list[dict], temperature: float, max_tokens: int
 
 async def get_llm_response(history: list[dict], collected: dict) -> str:
     """
-    Call LLM with a dynamically built system prompt based on current state.
-    collected: the session's collected fields dict (updated by extract_fields_from_text)
+    Call LLM to get a conversational reply.
     """
     next_field = get_next_question(collected)
     system = build_system_prompt(collected, next_field)
-    trimmed = history[-4:]
-    messages = [{"role": "system", "content": system}] + trimmed
-    if USE_GROQ:
-        return await _call_groq(messages, temperature=0.4, max_tokens=60)  # slightly higher temp for naturalness
-    return await _call_ollama(messages, temperature=0.3, max_tokens=60)    # was 0.1
+    
+    # Simple, high-reliability prompt for small models
+    messages = [{"role": "system", "content": system}] + history[-4:]
+    
+    try:
+        if USE_GROQ:
+            return await _call_groq(messages, temperature=0.4, max_tokens=100)
+        else:
+            # Standard chat call for Ollama (not forced JSON mode which is slow/brittle)
+            return await _call_ollama(messages, temperature=0.3, max_tokens=100)
+    except Exception as e:
+        print(f"[ERROR] LLM call failed: {e}")
+        return "Ji, main sun rahi hoon. Kripaya batayein?"
 
 
 

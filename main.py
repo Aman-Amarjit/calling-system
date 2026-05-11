@@ -236,7 +236,8 @@ async def web_call_stream(websocket: WebSocket, session_id: str):
     async def handle_interim_transcript(sid: str, transcript: str):
         if session.client_type == "web" and session.websocket:
             try:
-                await session.websocket.send_json({"type": "interim", "text": transcript})
+                # Frontend expects 'transcript' type for both interim and final
+                await session.websocket.send_json({"type": "transcript", "text": transcript, "isFinal": False})
             except:
                 pass
 
@@ -421,30 +422,26 @@ async def process_turn(call_sid: str, transcript: str):
     async with session.web_turn_lock:
         if session.processing:
             print(f"[SKIP] Already processing turn for {call_sid}, dropping: {transcript!r}")
-            return
         session.processing = True
         session.interrupted = False
 
     print(f"[CALLER]: {transcript}")
+    if session.client_type == "web" and session.websocket:
+        try:
+            await session.websocket.send_json({"type": "transcript", "text": transcript, "isFinal": True})
+        except:
+            pass
 
     session.history.append({"role": "user", "content": transcript})
     session.collected = extract_fields_from_text(transcript, session.collected)
 
-    # Fallback: if regex failed to find any field, let the LLM try to extract from history
-    missing_fields = [k for k, v in session.collected.items() if v is None]
-    if missing_fields:
-        llm_fields = await extract_booking_fields(session.history)
-        for field in missing_fields:
-            if llm_fields.get(field):
-                session.collected[field] = llm_fields[field]
-                print(f"[EXTRACTOR] LLM Fallback found {field}: {llm_fields[field]}")
-
     try:
         response_text = await get_llm_response(session.history, session.collected)
-        response_text = _sanitize_response(response_text, session.collected)
-
+        
         # Self-correction: if the bot mentions a name/phone in its own response, extract it!
         session.collected = extract_fields_from_text(response_text, session.collected)
+        
+        response_text = _sanitize_response(response_text, session.collected)
         session.history.append({"role": "assistant", "content": response_text})
         print(f"[PRIYA]: {response_text}")
 
