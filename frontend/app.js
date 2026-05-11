@@ -132,8 +132,14 @@ async function startWebCall() {
         const msg = JSON.parse(event.data);
         if (msg.type === "audio" && msg.url) {
           playBotAudio(msg.url);
-        } else if (msg.type === "interim" && msg.text) {
-          if (elLiveTranscript) elLiveTranscript.textContent = `Hearing: "${msg.text}..."`;
+        } else if (msg.type === "transcript") {
+          if (elLiveTranscript) {
+            if (msg.isFinal) {
+              elLiveTranscript.textContent = `You: "${msg.text}"`;
+            } else {
+              elLiveTranscript.textContent = `Hearing: "${msg.text}..."`;
+            }
+          }
         }
       } catch (e) {
         console.error("Invalid WS message", e);
