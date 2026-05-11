@@ -430,6 +430,13 @@ async def process_turn(call_sid: str, transcript: str):
     session.history.append({"role": "user", "content": transcript})
     session.collected = extract_fields_from_text(transcript, session.collected)
 
+    # Fallback: if regex failed to find the name, let the LLM try to extract it from history
+    if session.collected["name"] is None:
+        llm_fields = await extract_booking_fields(session.history)
+        if llm_fields.get("name"):
+            session.collected["name"] = llm_fields["name"]
+            print(f"[EXTRACTOR] LLM Fallback found name: {llm_fields['name']}")
+
     try:
         response_text = await get_llm_response(session.history, session.collected)
         response_text = _sanitize_response(response_text, session.collected)
