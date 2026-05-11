@@ -17,8 +17,6 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
 # ---------------------------------------------------------------------------
 # FIELD EXTRACTION — done in Python, not by the LLM
-# This is the key fix: we extract fields deterministically so the LLM
-# never has to "remember" what it already collected.
 # ---------------------------------------------------------------------------
 
 _PHONE_RE = re.compile(r'\b[6-9]\d{9}\b')
@@ -27,22 +25,6 @@ _MONTHS = [
     "january","february","march","april","may","june",
     "july","august","september","october","november","december",
     "jan","feb","mar","apr","jun","jul","aug","sep","oct","nov","dec",
-]
-
-_DATE_WORDS = [
-    "aaj","kal","parso","agle","next","monday","tuesday","wednesday",
-    "thursday","friday","saturday","sunday","somvar","mangalvar",
-    "budhvar","guruvar","shukravar","shanivar","ravivar",
-    "1","2","3","4","5","6","7","8","9","10","11","12","13","14","15",
-    "16","17","18","19","20","21","22","23","24","25","26","27","28","29","30","31",
-    "pehli","doosri","teesri","chauthi","paanchvi",
-]
-
-_TIME_WORDS = [
-    "baje","am","pm","morning","evening","afternoon","night",
-    "subah","shaam","dopahar","raat","midnight","noon",
-    "1","2","3","4","5","6","7","8","9","10","11","12",
-    "ek","do","teen","chaar","paanch","chhe","saat","aath","nau","das","gyarah","barah",
 ]
 
 
@@ -100,6 +82,11 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
     if collected["date"] is None:
         # Check for month name — use word boundary to avoid "market" matching "mar"
         for month in _MONTHS:
+            # "may" is also a common English auxiliary verb ("I may come tomorrow").
+            # Only treat it as a month when it appears next to a digit.
+            if month == "may":
+                if not re.search(r'(\d{1,2}\s*may|may\s*\d{1,2})', lower):
+                    continue
             if re.search(r'\b' + month + r'\b', lower):
                 m = re.search(r'(\d{1,2})\s*' + month, lower)
                 if m:
@@ -176,57 +163,59 @@ def get_next_question(collected: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 def build_system_prompt(collected: dict, next_field: str | None) -> str:
-    """Build a tightly-constrained prompt. Small models need hard rules, not suggestions."""
+    \"\"\"Build a warm, natural conversational prompt for a Hinglish booking assistant.\"\"\"
     known = {k: v for k, v in collected.items() if v is not None}
     known_str = ", ".join(f"{k}={v}" for k, v in known.items()) or "nothing yet"
 
     if next_field is not None:
-        base = f"""You are Priya, a booking assistant. Respond in Hinglish only.
+        base = f\"\"\"You are Priya, a friendly and natural-sounding booking assistant.
+Your goal is to be helpful and warm, like a real person on the phone.
 
-CONFIRMED FACTS (do not question, repeat, or re-ask these):
+CONFIRMED FACTS (don't repeat these):
 {known_str}
 
-YOUR ONLY JOB RIGHT NOW: Ask for '{next_field}' in one warm sentence.
+YOUR TASK: Ask for the '{next_field}' in a natural way.
 
-HARD RULES:
-- Reply in UNDER 20 words
-- Do NOT invent, assume, or repeat any field value
-- Do NOT say booking is confirmed unless instructed
-- Do NOT ask for anything except '{next_field}'
-- Do NOT explain yourself
-- If caller goes off-topic, say "zaroor" and redirect to '{next_field}'
+CONVERSATIONAL GUIDELINES:
+- Use Hinglish (Hindi + English) naturally.
+- Use filler words like "achha", "theek hai", "toh", "waise" or "um" to sound human.
+- Keep it concise but NOT robotic. Acknowledge what the user said before asking the next thing.
+- Never ask for more than one thing at a time.
+- If the caller says something emotional or off-topic, acknowledge it briefly with "achha" or "bilkul" before redirecting.
 
-FEW-SHOT EXAMPLES (follow this style exactly):
-Caller: "Mera naam Rahul hai"
-Priya: "Shukriya Rahul ji! Aapka phone number kya hai?"
+FEW-SHOT EXAMPLES:
+User: "Mera naam Rahul hai"
+Priya: "Achha, Rahul ji! Bahut khushi hui. Toh, aapka phone number kya hai?"
 
-Caller: "9876543210"
-Priya: "Perfect! Kaunsi date pe appointment chahiye aapko?"
+User: "9876543210"
+Priya: "Theek hai. Aur... kaunsi date pe aap appointment book karna chahenge?"
 
-Caller: "Kal"
-Priya: "Bilkul! Subah ya shaam — kaunsa time prefer karenge aap?"
+User: "Kal subah"
+Priya: "Bilkul! Kal ka din toh perfect hai. Subah mein kaunsa time aapko suit karega?"
 
-Notice: Short. Warm. Asks exactly one thing. Never invents details."""
+Remember: Sound warm, helpful, and human. Avoid being a strict robot.\"\"\"
 
         # Hard guardrail — belt-and-suspenders against re-asking
         do_not_ask = [k for k, v in collected.items() if v is not None]
         if do_not_ask:
-            base += f"\n\nDO NOT ask for: {', '.join(do_not_ask)}. Asking again is an error."
+            base += f"\n\nDO NOT ask for: {', '.join(do_not_ask)}."
 
     else:
         name  = collected.get("name", "")
         phone = collected.get("phone", "")
         date  = collected.get("date", "")
         time  = collected.get("time", "")
-        base = f"""You are Priya. All booking details are confirmed.
+        base = f\"\"\"You are Priya. The booking is complete.
 
 CONFIRMED: name={name}, phone={phone}, date={date}, time={time}
 
-Say EXACTLY this (do not change a single word):
-"Shukriya {name} ji. Aapki appointment {date} ko {time} baje confirmed ho gayi hai. Aapko jald confirmation milega. Dhanyavaad!"
+Say something warm and natural to confirm the booking:
+"Achha {name} ji, toh aapki appointment {date} ko {time} baje confirm ho gayi hai. Humein bahut khushi hai ki aapne humein chuna. Aapko jald hi confirmation message mil jayega. Dhanyavaad!"
 
-The phrase 'booking confirmed' MUST appear somewhere in your reply.
-Do not add anything else."""
+The phrase 'booking confirmed' or 'confirm ho gayi hai' MUST appear in your reply.
+Keep it natural and friendly.\"\"\"
+
+    return base
 
     return base
 
@@ -277,53 +266,10 @@ async def get_llm_response(history: list[dict], collected: dict) -> str:
     trimmed = history[-4:]
     messages = [{"role": "system", "content": system}] + trimmed
     if USE_GROQ:
-        return await _call_groq(messages, temperature=0.2, max_tokens=60)  # low temp = deterministic
-    return await _call_ollama(messages, temperature=0.1, max_tokens=60)    # was 0.7
+        return await _call_groq(messages, temperature=0.4, max_tokens=60)  # slightly higher temp for naturalness
+    return await _call_ollama(messages, temperature=0.3, max_tokens=60)    # was 0.1
 
 
-async def get_llm_response_streaming(history: list[dict], collected: dict):
-    """
-    Async generator: yields text sentence-by-sentence as Ollama streams tokens.
-    Allows TTS synthesis of the first sentence before the LLM finishes the rest.
-    Only used with Ollama (Groq latency is already low enough to not need streaming).
-    """
-    next_field = get_next_question(collected)
-    system = build_system_prompt(collected, next_field)
-    trimmed = history[-4:]
-    messages = [{"role": "system", "content": system}] + trimmed
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        async with client.stream(
-            "POST",
-            f"{OLLAMA_URL}/api/chat",
-            json={
-                "model": OLLAMA_MODEL,
-                "messages": messages,
-                "stream": True,
-                "options": {"num_predict": 60, "num_ctx": 512},
-            },
-        ) as resp:
-            buffer = ""
-            async for line in resp.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    chunk = json_lib.loads(line)
-                except Exception:
-                    continue
-                buffer += chunk.get("message", {}).get("content", "")
-                # Yield every complete sentence immediately
-                while any(p in buffer for p in ["।", ".", "?", "!"]):
-                    for punct in ["।", ".", "?", "!"]:
-                        if punct in buffer:
-                            sentence, buffer = buffer.split(punct, 1)
-                            sentence = sentence.strip()
-                            if sentence:
-                                yield sentence + punct
-                            break
-            # Flush any remaining text
-            if buffer.strip():
-                yield buffer.strip()
 
 
 def is_booking_confirmed(text: str) -> bool:

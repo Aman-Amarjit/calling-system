@@ -22,20 +22,43 @@ def _get_client() -> ElevenLabs:
 
 
 def _add_emotion_markup(text: str) -> str:
-    """
+    \"\"\"
     Pre-process text with SSML-like cues that ElevenLabs honours.
     Adds natural pauses and pacing changes at key conversational moments.
-    """
-    # Brief pause after the greeting — feels more human, less machine-gun
-    text = text.replace("Namaste", "Namaste <break time='0.4s'/>")
-    # Slow down and let the confirmation land — most important moment in the call
+    \"\"\"
+    # Brief pause after greetings
+    text = text.replace("Namaste", "Namaste <break time='0.5s'/>")
+    text = text.replace("Hello", "Hello <break time='0.3s'/>")
+    
+    # Natural fillers - add slight hesitation
+    # We use regex to match whole words and avoid double-replacing
+    import re
+    fillers = {
+        "achha": "achha <break time='0.3s'/>",
+        "theek hai": "theek hai <break time='0.4s'/>",
+        "toh": "toh <break time='0.2s'/>",
+        "waise": "waise <break time='0.3s'/>",
+        "ji": "ji <break time='0.2s'/>",
+        "um": "<break time='0.2s'/> um <break time='0.3s'/>",
+    }
+    for word, replacement in fillers.items():
+        pattern = re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
+        text = pattern.sub(replacement, text)
+
+    # Slow down for the most important confirmation part
+    text = text.replace(
+        "confirm ho gayi hai",
+        "<prosody rate='85%'>confirm ho gayi hai</prosody>",
+    )
     text = text.replace(
         "booking confirmed",
-        "<prosody rate='90%'>booking confirmed</prosody>",
+        "<prosody rate='85%'>booking confirmed</prosody>",
     )
-    # Short breath before asking a question — avoids running sentences together
-    for filler in ("Kripaya", "Ab kripaya", "Aur kripaya"):
-        text = text.replace(filler, f"<break time='0.2s'/>{filler}")
+
+    # Add pauses at sentence boundaries if not already there
+    text = text.replace("!", "! <break time='0.4s'/>")
+    text = text.replace("?", "? <break time='0.5s'/>")
+    
     return text
 
 

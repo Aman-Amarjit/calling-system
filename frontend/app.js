@@ -98,9 +98,6 @@ function updateStatus(text, className) {
 async function startWebCall() {
   updateStatus("Connecting...", "");
   if (elLiveTranscript) elLiveTranscript.textContent = "";
-  elBtnStart.style.display = "none";
-  elBtnEnd.style.display = "inline-block";
-
   const sessionId = crypto.randomUUID();
   const wsUrl = `${WS_BASE}/web-call/${sessionId}`;
   
@@ -115,9 +112,12 @@ async function startWebCall() {
     });
   } catch (err) {
     updateStatus("Microphone access denied.", "status-error");
-    endWebCall();
     return;
   }
+
+  // Mic granted — now swap buttons
+  elBtnStart.style.display = "none";
+  elBtnEnd.style.display = "inline-block";
 
   webSocket = new WebSocket(wsUrl);
   
@@ -259,6 +259,9 @@ function startAudioCapture() {
 }
 
 function endWebCall() {
+  window._interruptCounter = 0;
+  window._botStartTime = 0;
+
   if (webSocket) {
     webSocket.close();
     webSocket = null;

@@ -19,6 +19,7 @@ class Session:
     processing: bool = False  # True while a process_turn is running — prevents race conditions
     interrupted: bool = False
     web_turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _audio_chunk_count: int = 0
 
 
 sessions: dict[str, Session] = {}

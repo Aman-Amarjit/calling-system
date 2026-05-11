@@ -9,13 +9,17 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 
+import base64
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.exceptions import InvalidSignature
+
 import telnyx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from llm import extract_booking_fields, extract_fields_from_text, get_llm_response, get_llm_response_streaming, is_booking_confirmed
+from llm import extract_booking_fields, extract_fields_from_text, get_llm_response, is_booking_confirmed
 from sheets import append_booking
 from session import create_session, delete_session, get_session
 from stt import SILENCE_PROMPT, connect_deepgram, disconnect_deepgram, send_audio
@@ -94,9 +98,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Calling Bot Demo", lifespan=lifespan)
 
+_allowed_origins = ["http://localhost:8000", "http://127.0.0.1:8000"]
+_ngrok = os.getenv("NGROK_URL", "")
+if _ngrok:
+    _allowed_origins.append(_ngrok)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -134,11 +143,38 @@ async def stats():
     return {"active_calls": len(sessions), "latest_booking": latest}
 
 
+def _verify_telnyx_signature(body: bytes, signature_b64: str, timestamp: str) -> bool:
+    public_key_b64 = os.getenv("TELNYX_PUBLIC_KEY", "")
+    if not public_key_b64:
+        print("[WEBHOOK] TELNYX_PUBLIC_KEY not set — skipping signature verification")
+        return True  # Degrade gracefully if key not configured
+    try:
+        pub_key_bytes = base64.b64decode(public_key_b64)
+        pub_key = Ed25519PublicKey.from_public_bytes(pub_key_bytes)
+        message = f"{timestamp}|".encode() + body
+        sig_bytes = base64.b64decode(signature_b64)
+        pub_key.verify(sig_bytes, message)
+        return True
+    except (InvalidSignature, Exception):
+        return False
+
+
 @app.post("/webhook/telnyx")
 async def webhook_telnyx(request: Request):
-    payload = await request.json()
-    event_type = payload["data"]["event_type"]
-    call_sid   = payload["data"]["payload"]["call_control_id"]
+    body = await request.body()
+    sig   = request.headers.get("telnyx-signature-ed25519", "")
+    ts    = request.headers.get("telnyx-timestamp", "")
+    if not _verify_telnyx_signature(body, sig, ts):
+        print("[WEBHOOK] Signature verification failed")
+        return JSONResponse({"error": "invalid signature"}, status_code=403)
+    try:
+        payload    = json.loads(body)
+        event_type = payload["data"]["event_type"]
+        call_sid   = payload["data"]["payload"]["call_control_id"]
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"[WEBHOOK] Malformed payload: {e}")
+        return JSONResponse({"error": "malformed payload"}, status_code=400)
+
     print(f"[WEBHOOK] {event_type} | {call_sid}")
 
     if   event_type == "call.initiated":     return await handle_call_initiated(call_sid, payload)
@@ -185,9 +221,9 @@ async def web_call_stream(websocket: WebSocket, session_id: str):
     session.websocket = websocket
     
     greeting = (
-        "Namaste Sir, aapka swagat hai hamare appointment centre mein. "
-        "Main Priya bol rahi hoon — aapki kaise sahayata kar sakti hoon? "
-        "Kripaya apna poora naam batayein."
+        "Namaste! Aapka swagat hai. Main Priya bol rahi hoon appointment centre se. "
+        "Ji, main aapki kaise madad kar sakti hoon? "
+        "Sabse pehle, kya main aapka naam jaan sakti hoon?"
     )
     try:
         filename = await synthesise(greeting)
@@ -225,11 +261,9 @@ async def web_call_stream(websocket: WebSocket, session_id: str):
                 audio_data = message["bytes"]
                 if len(audio_data) > 0:
                     # Print peak volume to verify mic is picking up sound
-                    if not hasattr(session, '_audio_chunk_count'): session._audio_chunk_count = 0
                     session._audio_chunk_count += 1
                     
                     if session._audio_chunk_count % 50 == 1:
-                        import struct
                         count = len(audio_data) // 2
                         if count > 0:
                             shorts = struct.unpack(f"<{count}h", audio_data)
@@ -286,12 +320,16 @@ async def handle_call_answered(call_sid: str, payload: dict):
     """Synthesise greeting, return TeXML <Play> + <Stream>. Deepgram NOT connected yet."""
     print(f"[CALL] Answered: {call_sid}")
     greeting = (
-        "Namaste Sir, aapka swagat hai hamare appointment centre mein. "
-        "Main Priya bol rahi hoon — aapki kaise sahayata kar sakti hoon? "
-        "Kripaya apna poora naam batayein."
+        "Namaste! Aapka swagat hai. Main Priya bol rahi hoon appointment centre se. "
+        "Ji, main aapki kaise madad kar sakti hoon? "
+        "Sabse pehle, kya main aapka naam jaan sakti hoon?"
     )
     try:
         filename   = await synthesise(greeting)
+        # Track file so it gets cleaned up on hangup
+        session = get_session(call_sid)
+        if session:
+            session.audio_files.append(filename)
         ngrok_url  = os.getenv("NGROK_URL", "")
         audio_url  = f"{ngrok_url}/audio/{filename}"
         # wss:// for WebSocket — strip the https:// scheme
@@ -367,13 +405,6 @@ async def handle_hangup(call_sid: str, payload: dict):
 # ---------------------------------------------------------------------------
 # Conversation loop
 # ---------------------------------------------------------------------------
-
-async def _append_booking_logged(**kwargs):
-    """Wrapper so Sheets write failures are logged, not silently swallowed."""
-    try:
-        await append_booking(**kwargs)
-    except Exception as e:
-        print(f"[ERROR] Google Sheets write failed: {e}")
 
 
 async def process_turn(call_sid: str, transcript: str):
@@ -493,7 +524,7 @@ async def _silence_timeout(call_sid: str):
     # Skip for web clients (handled by Deepgram endpointing/VAD)
     if session.client_type == "web":
         return
-    print(f"[SILENCE] 5s timeout: {call_sid}")
+    print(f"[SILENCE] 8s timeout: {call_sid}")
     try:
         filename  = await synthesise(SILENCE_PROMPT)
         session.audio_files.append(filename)

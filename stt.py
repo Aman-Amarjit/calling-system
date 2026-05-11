@@ -112,5 +112,6 @@ async def disconnect_deepgram(call_sid: str):
     """Close and remove the Deepgram connection for this call."""
     conn = deepgram_connections.pop(call_sid, None)
     if conn:
-        conn.finish()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, conn.finish)
         print(f"[STT] Deepgram disconnected for call: {call_sid}")
