@@ -163,12 +163,12 @@ def get_next_question(collected: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 def build_system_prompt(collected: dict, next_field: str | None) -> str:
-    \"\"\"Build a warm, natural conversational prompt for a Hinglish booking assistant.\"\"\"
+    """Build a warm, natural conversational prompt for a Hinglish booking assistant."""
     known = {k: v for k, v in collected.items() if v is not None}
     known_str = ", ".join(f"{k}={v}" for k, v in known.items()) or "nothing yet"
 
     if next_field is not None:
-        base = f\"\"\"You are Priya, a friendly and natural-sounding booking assistant.
+        base = f"""You are Priya, a friendly and natural-sounding booking assistant.
 Your goal is to be helpful and warm, like a real person on the phone.
 
 CONFIRMED FACTS (don't repeat these):
@@ -193,7 +193,7 @@ Priya: "Theek hai. Aur... kaunsi date pe aap appointment book karna chahenge?"
 User: "Kal subah"
 Priya: "Bilkul! Kal ka din toh perfect hai. Subah mein kaunsa time aapko suit karega?"
 
-Remember: Sound warm, helpful, and human. Avoid being a strict robot.\"\"\"
+Remember: Sound warm, helpful, and human. Avoid being a strict robot."""
 
         # Hard guardrail — belt-and-suspenders against re-asking
         do_not_ask = [k for k, v in collected.items() if v is not None]
@@ -205,7 +205,7 @@ Remember: Sound warm, helpful, and human. Avoid being a strict robot.\"\"\"
         phone = collected.get("phone", "")
         date  = collected.get("date", "")
         time  = collected.get("time", "")
-        base = f\"\"\"You are Priya. The booking is complete.
+        base = f"""You are Priya. The booking is complete.
 
 CONFIRMED: name={name}, phone={phone}, date={date}, time={time}
 
@@ -213,7 +213,7 @@ Say something warm and natural to confirm the booking:
 "Achha {name} ji, toh aapki appointment {date} ko {time} baje confirm ho gayi hai. Humein bahut khushi hai ki aapne humein chuna. Aapko jald hi confirmation message mil jayega. Dhanyavaad!"
 
 The phrase 'booking confirmed' or 'confirm ho gayi hai' MUST appear in your reply.
-Keep it natural and friendly.\"\"\"
+Keep it natural and friendly."""
 
     return base
 
