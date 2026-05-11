@@ -72,6 +72,7 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
             "naam","number","phone","date","time","appointment","booking",
             "kal","aaj","parso","subah","shaam","raat","dopahar",
             "namaste", "shukriya", "thank", "thanks", "aapka", "dhanyavaad",
+            "नमस्ते", "शुक्रिया", "धन्यवाद", "ठीक", "है", "हाँ", "नहीं", "हूँ",
         }
         for pat in name_patterns:
             m = re.search(pat, lower)
