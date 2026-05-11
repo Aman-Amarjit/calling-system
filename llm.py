@@ -217,8 +217,6 @@ Keep it natural and friendly.\"\"\"
 
     return base
 
-    return base
-
 
 # ---------------------------------------------------------------------------
 # LLM CALL WRAPPERS
@@ -274,7 +272,8 @@ async def get_llm_response(history: list[dict], collected: dict) -> str:
 
 def is_booking_confirmed(text: str) -> bool:
     """Check if the bot's response contains the booking confirmation trigger phrase."""
-    return "booking confirmed" in text.lower()
+    lower = text.lower()
+    return "booking confirmed" in lower or "confirm ho gayi hai" in lower
 
 
 async def _call_ollama_json(messages: list[dict]) -> dict:

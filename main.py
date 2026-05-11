@@ -243,12 +243,6 @@ async def web_call_stream(websocket: WebSocket, session_id: str):
     await connect_deepgram(session_id, process_turn, on_interim_callback=handle_interim_transcript, is_web=True)
 
     import struct
-    def get_rms(audio_bytes):
-        if not audio_bytes: return 0
-        count = len(audio_bytes) // 2
-        shorts = struct.unpack(f"<{count}h", audio_bytes)
-        sum_sq = sum(s*s for s in shorts)
-        return (sum_sq / count)**0.5 / 32768.0
 
     try:
         while True:
