@@ -442,6 +442,9 @@ async def process_turn(call_sid: str, transcript: str):
     try:
         response_text = await get_llm_response(session.history, session.collected)
         response_text = _sanitize_response(response_text, session.collected)
+
+        # Self-correction: if the bot mentions a name/phone in its own response, extract it!
+        session.collected = extract_fields_from_text(response_text, session.collected)
         session.history.append({"role": "assistant", "content": response_text})
         print(f"[PRIYA]: {response_text}")
 

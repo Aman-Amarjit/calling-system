@@ -49,7 +49,8 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
     if collected["name"] is None:
         name_patterns = [
             # "mera naam Rahul hai"
-            r"(?:mera|meri|my|main|mai)\s+naam\s+([\w\u0900-\u097F]+(?:\s+[\w\u0900-\u097F]+?)?)\s*(?:\bhai\b|\bhe\b|\bhoon\b|\bhun\b|\bh\b|[.!?]|$)",
+            # "mera naam Rahul" (very permissive)
+            r"(?:mera|meri|my|main|mai)\s+naam\s+(?:hai\s+)?([^\s,?!.]{2,}(?:\s+[^\s,?!.]{2,})?)",
             # "naam Rahul" or "naam hai Rahul"
             r"\bnaam\s+(?:hai\s+)?([\w\u0900-\u097F]{2,})\b",
             # "I am Rahul" / "I'm Rahul" / "myself Rahul"
@@ -60,6 +61,8 @@ def extract_fields_from_text(text: str, existing: dict) -> dict:
             r"([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)\s+(?:hoon|hun)\b",
             # "Rahul hai naam mera"
             r"([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)\s+hai\s+naam",
+            # "Achha Rahul ji" or "Shukriya Rahul ji" (Bot acknowledgment)
+            r"(?:achha|shukriya|theek hai|bilkul|hello)\s+([^\s,?!.]{2,})\s+ji",
             # bare name — only as last resort (single word reply to 'apna naam batayein')
             r"^\s*([\w\u0900-\u097F]{2,}(?:\s+[\w\u0900-\u097F]+)?)[.!?]?\s*$",
         ]
@@ -309,11 +312,18 @@ async def extract_booking_fields(history: list[dict]) -> dict:
 
     if any(v is None for v in collected.values()):
         extraction_prompt = (
-            "Extract booking fields from the conversation. "
-            "Return JSON with exactly these keys: name, phone, date, time. "
-            "Use null for anything not mentioned. Return ONLY the JSON object."
+            "You are a precise data extraction tool. Extract booking details from the conversation history. "
+            "Return ONLY a JSON object with these keys: name, phone, date, time. "
+            "Rules:\n"
+            "1. Use null if a field is not found.\n"
+            "2. For names, look for phrases like 'Mera naam ...' or 'I am ...'.\n"
+            "3. For phone numbers, remove all spaces and hyphens.\n"
+            "Example output: {\"name\": \"Rahul\", \"phone\": \"9876543210\", \"date\": null, \"time\": null}"
         )
-        messages = history + [{"role": "user", "content": extraction_prompt}]
+        messages = [
+            {"role": "system", "content": extraction_prompt},
+            {"role": "user", "content": f"CONVERSATION HISTORY:\n{history}"}
+        ]
         try:
             if USE_GROQ:
                 text = await _call_groq(messages, temperature=0, max_tokens=80)
