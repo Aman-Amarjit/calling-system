@@ -21,47 +21,6 @@ def _get_client() -> ElevenLabs:
     return _client
 
 
-def _add_emotion_markup(text: str) -> str:
-    \"\"\"
-    Pre-process text with SSML-like cues that ElevenLabs honours.
-    Adds natural pauses and pacing changes at key conversational moments.
-    \"\"\"
-    # Brief pause after greetings
-    text = text.replace("Namaste", "Namaste <break time='0.5s'/>")
-    text = text.replace("Hello", "Hello <break time='0.3s'/>")
-    
-    # Natural fillers - add slight hesitation
-    # We use regex to match whole words and avoid double-replacing
-    import re
-    fillers = {
-        "achha": "achha <break time='0.3s'/>",
-        "theek hai": "theek hai <break time='0.4s'/>",
-        "toh": "toh <break time='0.2s'/>",
-        "waise": "waise <break time='0.3s'/>",
-        "ji": "ji <break time='0.2s'/>",
-        "um": "<break time='0.2s'/> um <break time='0.3s'/>",
-    }
-    for word, replacement in fillers.items():
-        pattern = re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
-        text = pattern.sub(replacement, text)
-
-    # Slow down for the most important confirmation part
-    text = text.replace(
-        "confirm ho gayi hai",
-        "<prosody rate='85%'>confirm ho gayi hai</prosody>",
-    )
-    text = text.replace(
-        "booking confirmed",
-        "<prosody rate='85%'>booking confirmed</prosody>",
-    )
-
-    # Add pauses at sentence boundaries if not already there
-    text = text.replace("!", "! <break time='0.4s'/>")
-    text = text.replace("?", "? <break time='0.5s'/>")
-    
-    return text
-
-
 async def synthesise(text: str) -> str:
     """
     Convert text to speech using ElevenLabs.
@@ -70,13 +29,11 @@ async def synthesise(text: str) -> str:
     """
     voice_id = os.getenv("ELEVENLABS_VOICE_ID")
     loop = asyncio.get_running_loop()
-    marked_text = _add_emotion_markup(text)
-
     print(f"[TTS] Synthesising: {text[:50]}...")
     audio_bytes = await loop.run_in_executor(
         None,
         lambda: b"".join(_get_client().generate(
-            text=marked_text,
+            text=text,
             voice=voice_id,
             model="eleven_multilingual_v2",  # supports Hinglish
             voice_settings=VoiceSettings(
